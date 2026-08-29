@@ -5,6 +5,8 @@ repo is the backend only — a NestJS + PostgreSQL + Redis API. The frontend is 
 built afterward.
 
 See [DECISIONS.md](./DECISIONS.md) for how every ambiguity in the spec was resolved, and why.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the Docker/VPS architecture, the CI/CD pipeline, and
+operational commands (logs, restart, rollback).
 
 ## Tech stack
 
@@ -144,27 +146,13 @@ Real-time (Socket.IO, JWT in `handshake.auth.token`): `notification.new` (person
 
 ## Deployment
 
-**Live URL: https://shiftsync.civic-nexus.com** (nginx → a Docker container on port 4000, TLS via
-the existing `*.civic-nexus.com` wildcard certificate — no per-subdomain cert needed).
+**Live URL: https://shiftsync.civic-nexus.com** — runs as a Docker container on the VPS behind
+nginx/TLS. Branch flow: `development` runs CI validation only; merging into `main` builds,
+ships, and deploys automatically.
 
-The app runs as a Docker container on the VPS (`docker run --restart unless-stopped`) instead of
-under PM2 — Docker's own restart policy supervises the process now. `Dockerfile` is a two-stage
-build: a `builder` stage that installs all deps, generates the Prisma client, and compiles;
-a slim `runtime` stage with only production `node_modules`, `dist/`, and `prisma/` (for
-migrations), running as the non-root `node` user.
-
-`.github/workflows/deploy.yml` builds the image in CI, then ships it to the VPS over the existing
-SSH connection (`docker save | rsync | docker load`) rather than through a container registry —
-same "build once, deploy the exact tested artifact" benefit as a registry-based flow, without an
-extra credential to manage. On the VPS it runs `prisma migrate deploy` against the new image,
-swaps the running container, and waits on `/health` before declaring success; the 3 most recent
-images are kept for a quick manual rollback (`docker run ... shiftsync-backend:<previous-sha>`).
-
-Branch flow: `development` is the working branch — every push there runs validate only
-(typecheck/lint/test), no deploy. `main` is the production branch — merging `development` into
-it (via PR or direct merge) runs validate + build + deploy. Required GitHub repo secrets:
-`SSH_PRIVATE_KEY` (a key dedicated to this workflow — never a personal or reused key),
-`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
+Full architecture (Dockerfile design, CI/CD pipeline, shared-VPS isolation, required GitHub
+secrets) and operational commands (logs, restart, rollback) are in
+**[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
 ### Running the container locally
 
@@ -176,22 +164,3 @@ docker compose --profile app up -d --build app
 This builds the same `Dockerfile` used in production against the `postgres`/`redis` services
 already in `docker-compose.yml` — useful for verifying the container image itself, though
 `npm run start:dev` (hot reload) remains the faster day-to-day loop.
-
-The VPS shares infrastructure with other projects, so this app is deliberately isolated from
-them:
-
-- **Deploy path**: `/var/www/nestjs/shiftsync-backend` — its own subfolder, not the shared
-  `/var/www/nestjs` parent (which holds unrelated projects the deploy workflow's `rsync --delete`
-  would otherwise wipe).
-- **Database**: a dedicated Postgres role/database (`shiftsync_user` / `shiftsync`), separate
-  from other apps' roles on the same Postgres instance.
-- **Redis**: same Redis server as another app on this VPS, but a different logical DB
-  (`redis://localhost:6379/1`) — no key collisions, and a `FLUSHDB` on either app can't touch the
-  other's queues.
-- **Port**: `4000` — chosen because `3000`, `2222`, and `3333` were already in use by other
-  services on the box.
-
-The VPS's `.env` (production secrets — DB/Redis URLs, JWT secrets, SMTP credentials) lives only
-on the VPS, at `/var/www/nestjs/shiftsync-backend/.env`, and is never synced by the deploy
-workflow (`rsync --exclude='.env'`). `CORS_ORIGIN` is currently `*` there since no frontend
-domain exists yet — tighten it to the real frontend origin once one does.
