@@ -7,9 +7,9 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [development]
   pull_request:
-    branches: [main]
+    branches: [development]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -35,7 +35,7 @@ jobs:
   # ── STAGE 2 — BUILD ───────────────────────────────────────
   build:
     needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
