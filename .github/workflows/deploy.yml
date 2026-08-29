@@ -1,0 +1,112 @@
+# ============================================================
+#  GitHub Actions — NestJS → VPS (SSH + PM2 + Prisma)
+#  Adapted from the team's GitLab CI/CD pipeline. No Docker required.
+# ============================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── STAGE 1 — VALIDATE ────────────────────────────────────
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run test
+
+  # ── STAGE 2 — BUILD ───────────────────────────────────────
+  build:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            dist/
+            prisma/
+            package.json
+            package-lock.json
+            ecosystem.config.cjs
+          retention-days: 1
+
+  # ── STAGE 3 — DEPLOY ──────────────────────────────────────
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: .
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload build to VPS
+        # .env is intentionally NOT synced — it lives only on the VPS.
+        run: |
+          rsync -avz --delete \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            -e "ssh -p ${{ secrets.VPS_PORT }} -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
+            dist prisma package.json package-lock.json ecosystem.config.cjs \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.DEPLOY_PATH }}/
+
+      - name: Install deps, migrate, reload PM2
+        run: |
+          ssh -p "${{ secrets.VPS_PORT }}" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'REMOTE'
+              set -e
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+              cd "${{ secrets.DEPLOY_PATH }}"
+
+              echo "-> Installing production dependencies..."
+              npm ci --omit=dev
+
+              echo "-> Running Prisma migrations..."
+              npx prisma migrate deploy
+
+              echo "-> Generating Prisma client..."
+              npx prisma generate
+
+              echo "-> Reloading app with PM2 (zero-downtime if already running)..."
+              pm2 startOrReload ecosystem.config.cjs --env production
+              pm2 save
+
+              echo "Deploy complete - $(date)"
+          REMOTE
