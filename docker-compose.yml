@@ -29,6 +29,27 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional: the app itself, built from the same Dockerfile used in
+  # production — for full-stack parity testing. Day-to-day development is
+  # faster via `npm run start:dev` against the postgres/redis services above;
+  # this is for verifying the container image itself works end-to-end.
+  # Run migrations first: `docker compose run --rm app npx prisma migrate deploy`
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: 'postgresql://shiftsync:shiftsync@postgres:5432/shiftsync?schema=public'
+      REDIS_URL: 'redis://redis:6379'
+    ports:
+      - '3000:3000'
+    profiles: [app]
+
 volumes:
   shiftsync_postgres_data:
   shiftsync_redis_data:

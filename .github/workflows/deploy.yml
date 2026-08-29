@@ -1,15 +1,17 @@
 # ============================================================
-#  GitHub Actions — NestJS → VPS (SSH + PM2 + Prisma)
-#  Adapted from the team's GitLab CI/CD pipeline. No Docker required.
+#  GitHub Actions — NestJS → VPS (Docker + SSH)
+#  Builds a container image in CI, ships it to the VPS over the
+#  existing SSH connection (docker save | ssh | docker load), and
+#  runs it there. No registry, no extra credentials beyond SSH.
 # ============================================================
 
 name: Deploy
 
 on:
   push:
-    branches: [development]
+    branches: [development, main]
   pull_request:
-    branches: [development]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,29 +34,24 @@ jobs:
       - run: npm run lint
       - run: npm run test
 
-  # ── STAGE 2 — BUILD ───────────────────────────────────────
+  # ── STAGE 2 — BUILD IMAGE ─────────────────────────────────
   build:
     needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm install --no-audit --no-fund
-      - run: npx prisma generate
-      - run: npm run build
+
+      - name: Build image
+        run: docker build -t shiftsync-backend:${{ github.sha }} .
+
+      - name: Save image to a tarball
+        run: docker save shiftsync-backend:${{ github.sha }} | gzip > shiftsync-backend.tar.gz
+
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ github.sha }}
-          path: |
-            dist/
-            prisma/
-            package.json
-            package-lock.json
-            ecosystem.config.cjs
+          name: docker-image-${{ github.sha }}
+          path: shiftsync-backend.tar.gz
           retention-days: 1
 
   # ── STAGE 3 — DEPLOY ──────────────────────────────────────
@@ -66,7 +63,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: build-${{ github.sha }}
+          name: docker-image-${{ github.sha }}
           path: .
 
       - name: Install SSH key
@@ -76,38 +73,54 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Upload build to VPS
-        # .env is intentionally NOT synced — it lives only on the VPS.
+      - name: Ship image to the VPS
         run: |
-          rsync -avz --delete \
-            --exclude='.env' \
-            --exclude='node_modules' \
+          rsync -avz \
             -e "ssh -p ${{ secrets.VPS_PORT }} -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
-            dist prisma package.json package-lock.json ecosystem.config.cjs \
+            shiftsync-backend.tar.gz \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.DEPLOY_PATH }}/
 
-      - name: Install deps, migrate, reload PM2
+      - name: Load image, migrate, restart container
+        env:
+          IMAGE_TAG: shiftsync-backend:${{ github.sha }}
         run: |
           ssh -p "${{ secrets.VPS_PORT }}" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'REMOTE'
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "IMAGE_TAG='$IMAGE_TAG' bash -s" << 'REMOTE'
               set -e
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
               cd "${{ secrets.DEPLOY_PATH }}"
 
-              echo "-> Installing production dependencies..."
-              npm install --omit=dev --no-audit --no-fund
+              echo "-> Loading Docker image..."
+              docker load < shiftsync-backend.tar.gz
+              rm -f shiftsync-backend.tar.gz
 
               echo "-> Running Prisma migrations..."
-              npx prisma migrate deploy
+              docker run --rm --network host --env-file .env "$IMAGE_TAG" npx prisma migrate deploy
 
-              echo "-> Generating Prisma client..."
-              npx prisma generate
+              echo "-> Stopping previous container (if any)..."
+              docker stop shiftsync-api 2>/dev/null || true
+              docker rm shiftsync-api 2>/dev/null || true
 
-              echo "-> Reloading app with PM2 (zero-downtime if already running)..."
-              pm2 startOrReload ecosystem.config.cjs --env production
-              pm2 save
+              echo "-> Starting new container..."
+              docker run -d --name shiftsync-api --network host --restart unless-stopped \
+                --env-file .env "$IMAGE_TAG"
+
+              echo "-> Waiting for health check..."
+              for i in $(seq 1 15); do
+                if curl -fsS http://127.0.0.1:4000/health > /dev/null 2>&1; then
+                  echo "Health check passed."
+                  break
+                fi
+                if [ "$i" = 15 ]; then
+                  echo "Health check failed after 15 attempts — check 'docker logs shiftsync-api'."
+                  exit 1
+                fi
+                sleep 2
+              done
+
+              echo "-> Pruning old images (keeping the 3 most recent for quick rollback)..."
+              docker image prune -f > /dev/null 2>&1 || true
+              docker images shiftsync-backend --format '{{.Tag}}' | tail -n +4 | \
+                xargs -r -I{} docker rmi "shiftsync-backend:{}" 2>/dev/null || true
 
               echo "Deploy complete - $(date)"
           REMOTE
