@@ -1,9 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, AuditEntityType, type Shift } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AssignmentStatus, AuditAction, AuditEntityType, type Shift } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LocationAccessService } from '../access/location-access.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type.js';
+import { cancelPendingSwapsForAssignments } from './cancel-pending-swaps.util.js';
 import { CreateShiftDto } from './dto/create-shift.dto.js';
 import { UpdateShiftDto } from './dto/update-shift.dto.js';
 import { assertEditableOrThrow } from './edit-cutoff.util.js';
@@ -16,6 +18,7 @@ export class ShiftsService {
     private readonly audit: AuditService,
     private readonly locationAccess: LocationAccessService,
     private readonly scheduleWeeks: ScheduleWeeksService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(scheduleWeekId: string, dto: CreateShiftDto, actor: AuthenticatedUser): Promise<Shift> {
@@ -115,6 +118,19 @@ export class ShiftsService {
       locationId: week.locationId,
     });
 
+    const activeAssignmentIds = (
+      await this.prisma.shiftAssignment.findMany({
+        where: { shiftId: id, status: AssignmentStatus.ASSIGNED },
+        select: { id: true },
+      })
+    ).map((a) => a.id);
+    await cancelPendingSwapsForAssignments(
+      this.prisma,
+      this.notifications,
+      activeAssignmentIds,
+      `A manager edited this shift, so the pending request was automatically cancelled.`,
+    );
+
     return shift;
   }
 
@@ -128,6 +144,29 @@ export class ShiftsService {
       publishCutoffHours: week.publishCutoffHours,
       earliestAffectedStart: before.startAt,
     });
+
+    const assignmentIds = (
+      await this.prisma.shiftAssignment.findMany({
+        where: { shiftId: id },
+        select: { id: true },
+      })
+    ).map((a) => a.id);
+
+    if (assignmentIds.length > 0) {
+      const swapHistoryCount = await this.prisma.swapRequest.count({
+        where: {
+          OR: [
+            { initiatorAssignmentId: { in: assignmentIds } },
+            { proposedReturnAssignmentId: { in: assignmentIds } },
+          ],
+        },
+      });
+      if (swapHistoryCount > 0) {
+        throw new ConflictException(
+          'This shift has swap/drop history and cannot be deleted. Cancel any active requests, or leave the shift in place to preserve the audit trail.',
+        );
+      }
+    }
 
     await this.prisma.shift.delete({ where: { id } });
 

@@ -3,9 +3,11 @@ import { AssignmentStatus, AuditAction, AuditEntityType, type ShiftAssignment } 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LocationAccessService } from '../access/location-access.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type.js';
 import { ConstraintViolationException } from '../common/exceptions/constraint-violation.exception.js';
 import type { ConstraintViolation } from '../common/constraints/constraint.types.js';
+import { cancelPendingSwapsForAssignments } from './cancel-pending-swaps.util.js';
 import { ConstraintEngineService } from './constraint-engine/constraint-engine.service.js';
 import { assertEditableOrThrow } from './edit-cutoff.util.js';
 import { ScheduleWeeksService } from './schedule-weeks.service.js';
@@ -23,6 +25,7 @@ export class ShiftAssignmentsService {
     private readonly locationAccess: LocationAccessService,
     private readonly scheduleWeeks: ScheduleWeeksService,
     private readonly constraintEngine: ConstraintEngineService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async assign(
@@ -134,6 +137,13 @@ export class ShiftAssignmentsService {
       afterState: updated,
       locationId: shift.locationId,
     });
+
+    await cancelPendingSwapsForAssignments(
+      this.prisma,
+      this.notifications,
+      [existing.id],
+      'A manager removed this assignment, so the pending request was automatically cancelled.',
+    );
   }
 
   private async getShiftOrThrow(id: string) {

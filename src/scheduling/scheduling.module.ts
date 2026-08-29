@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConstraintEngineModule } from './constraint-engine/constraint-engine.module.js';
 import { ScheduleWeeksController } from './schedule-weeks.controller.js';
 import { ScheduleWeeksService } from './schedule-weeks.service.js';
@@ -8,7 +9,7 @@ import { ShiftsController } from './shifts.controller.js';
 import { ShiftsService } from './shifts.service.js';
 
 @Module({
-  imports: [ConstraintEngineModule],
+  imports: [ConstraintEngineModule, NotificationsModule],
   controllers: [ScheduleWeeksController, ShiftsController, ShiftAssignmentsController],
   providers: [ScheduleWeeksService, ShiftsService, ShiftAssignmentsService],
   exports: [ScheduleWeeksService, ShiftsService, ShiftAssignmentsService, ConstraintEngineModule],
