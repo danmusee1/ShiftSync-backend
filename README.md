@@ -8,6 +8,7 @@ See [DECISIONS.md](./DECISIONS.md) for how every ambiguity in the spec was resol
 
 ## Tech stack
 
+
 - **NestJS 12** (Express, ESM/NodeNext), TypeScript, Vitest, oxlint
 - **PostgreSQL** via **Prisma ORM**
 - **Redis + BullMQ** for background jobs (drop-request expiry)
