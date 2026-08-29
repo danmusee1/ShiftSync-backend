@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AuditAction, AuditEntityType, Prisma } from '@prisma/client';
+import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export interface RecordAuditParams {
@@ -63,6 +64,41 @@ export class AuditService {
         location: { select: { id: true, name: true } },
       },
     });
+  }
+
+  async exportToXlsx(filter: { locationId?: string; from?: Date; to?: Date }): Promise<Buffer> {
+    const logs = await this.findForExport(filter);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Audit Log');
+    sheet.columns = [
+      { header: 'Timestamp (UTC)', key: 'createdAt', width: 22 },
+      { header: 'Entity Type', key: 'entityType', width: 18 },
+      { header: 'Entity ID', key: 'entityId', width: 38 },
+      { header: 'Action', key: 'action', width: 14 },
+      { header: 'Actor', key: 'actor', width: 28 },
+      { header: 'Location', key: 'location', width: 20 },
+      { header: 'Reason', key: 'reason', width: 30 },
+      { header: 'Before', key: 'before', width: 50 },
+      { header: 'After', key: 'after', width: 50 },
+    ];
+
+    for (const log of logs) {
+      sheet.addRow({
+        createdAt: log.createdAt.toISOString(),
+        entityType: log.entityType,
+        entityId: log.entityId,
+        action: log.action,
+        actor: log.actor ? `${log.actor.firstName} ${log.actor.lastName} (${log.actor.email})` : 'system',
+        location: log.location?.name ?? '',
+        reason: log.reason ?? '',
+        before: log.beforeState ? JSON.stringify(log.beforeState) : '',
+        after: log.afterState ? JSON.stringify(log.afterState) : '',
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 }
 
