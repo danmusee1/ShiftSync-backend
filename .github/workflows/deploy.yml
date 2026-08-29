@@ -26,7 +26,7 @@ jobs:
           node-version: '22.22.3'
           cache: 'npm'
       - run: node -v
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: npx prisma generate
       - run: npx tsc --noEmit
       - run: npm run lint
@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: npx prisma generate
       - run: npm run build
       - uses: actions/upload-artifact@v4
@@ -97,7 +97,7 @@ jobs:
               cd "${{ secrets.DEPLOY_PATH }}"
 
               echo "-> Installing production dependencies..."
-              npm ci --omit=dev
+              npm install --omit=dev --no-audit --no-fund
 
               echo "-> Running Prisma migrations..."
               npx prisma migrate deploy
