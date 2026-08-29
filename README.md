@@ -144,15 +144,38 @@ Real-time (Socket.IO, JWT in `handshake.auth.token`): `notification.new` (person
 
 ## Deployment
 
-**Live URL: https://shiftsync.civic-nexus.com** (nginx → PM2 app on port 4000, TLS via the
-existing `*.civic-nexus.com` wildcard certificate — no per-subdomain cert needed).
+**Live URL: https://shiftsync.civic-nexus.com** (nginx → a Docker container on port 4000, TLS via
+the existing `*.civic-nexus.com` wildcard certificate — no per-subdomain cert needed).
+
+The app runs as a Docker container on the VPS (`docker run --restart unless-stopped`) instead of
+under PM2 — Docker's own restart policy supervises the process now. `Dockerfile` is a two-stage
+build: a `builder` stage that installs all deps, generates the Prisma client, and compiles;
+a slim `runtime` stage with only production `node_modules`, `dist/`, and `prisma/` (for
+migrations), running as the non-root `node` user.
+
+`.github/workflows/deploy.yml` builds the image in CI, then ships it to the VPS over the existing
+SSH connection (`docker save | rsync | docker load`) rather than through a container registry —
+same "build once, deploy the exact tested artifact" benefit as a registry-based flow, without an
+extra credential to manage. On the VPS it runs `prisma migrate deploy` against the new image,
+swaps the running container, and waits on `/health` before declaring success; the 3 most recent
+images are kept for a quick manual rollback (`docker run ... shiftsync-backend:<previous-sha>`).
 
 Branch flow: `development` is the working branch — every push there runs validate only
 (typecheck/lint/test), no deploy. `main` is the production branch — merging `development` into
-it (via PR or direct merge) runs validate + build + deploy. `.github/workflows/deploy.yml`
-deploys to the VPS via SSH/rsync + PM2, mirroring the structure of the team's existing GitLab
-pipeline. Required GitHub repo secrets: `SSH_PRIVATE_KEY` (a key dedicated to this workflow —
-never a personal or reused key), `VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
+it (via PR or direct merge) runs validate + build + deploy. Required GitHub repo secrets:
+`SSH_PRIVATE_KEY` (a key dedicated to this workflow — never a personal or reused key),
+`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
+
+### Running the container locally
+
+```bash
+docker compose --profile app run --rm app npx prisma migrate deploy   # once
+docker compose --profile app up -d --build app
+```
+
+This builds the same `Dockerfile` used in production against the `postgres`/`redis` services
+already in `docker-compose.yml` — useful for verifying the container image itself, though
+`npm run start:dev` (hot reload) remains the faster day-to-day loop.
 
 The VPS shares infrastructure with other projects, so this app is deliberately isolated from
 them:
