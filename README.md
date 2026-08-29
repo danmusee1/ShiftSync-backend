@@ -147,11 +147,12 @@ Real-time (Socket.IO, JWT in `handshake.auth.token`): `notification.new` (person
 **Live URL: https://shiftsync.civic-nexus.com** (nginx → PM2 app on port 4000, TLS via the
 existing `*.civic-nexus.com` wildcard certificate — no per-subdomain cert needed).
 
-`.github/workflows/deploy.yml` builds on push to `development` (the only branch this repo
-currently has — there is no `main`) and deploys to the VPS via SSH/rsync +
-PM2, mirroring the structure of the team's existing GitLab pipeline. Required GitHub repo
-secrets: `SSH_PRIVATE_KEY` (a key dedicated to this workflow — never a personal or reused key),
-`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
+Branch flow: `development` is the working branch — every push there runs validate only
+(typecheck/lint/test), no deploy. `main` is the production branch — merging `development` into
+it (via PR or direct merge) runs validate + build + deploy. `.github/workflows/deploy.yml`
+deploys to the VPS via SSH/rsync + PM2, mirroring the structure of the team's existing GitLab
+pipeline. Required GitHub repo secrets: `SSH_PRIVATE_KEY` (a key dedicated to this workflow —
+never a personal or reused key), `VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
 
 The VPS shares infrastructure with other projects, so this app is deliberately isolated from
 them:
