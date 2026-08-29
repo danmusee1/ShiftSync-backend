@@ -1,11 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import {
-  AssignmentStatus,
-  AuditAction,
-  AuditEntityType,
-  Prisma,
-  type ShiftAssignment,
-} from '@prisma/client';
+import { AssignmentStatus, AuditAction, AuditEntityType, type ShiftAssignment } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LocationAccessService } from '../access/location-access.service.js';
@@ -150,5 +144,3 @@ export class ShiftAssignmentsService {
     return shift;
   }
 }
-
-export type { Prisma };
