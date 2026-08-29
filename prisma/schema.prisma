@@ -1,0 +1,421 @@
+// ShiftSync data model
+// Conventions:
+// - All instants (`DateTime` without `@db.Date`) are stored as UTC timestamptz.
+// - Wall-clock-only fields (recurring availability times) are stored as "HH:mm" strings
+//   and interpreted in the owning staff member's `homeTimezone` — see DECISIONS.md.
+// - Certifications/skills are soft-revoked (nullable `decertifiedAt`), never deleted,
+//   so historical shifts and audit trails remain intact.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum NotificationChannel {
+  IN_APP
+  IN_APP_AND_EMAIL
+}
+
+enum AvailabilityExceptionType {
+  AVAILABLE
+  UNAVAILABLE
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  CANCELLED
+}
+
+enum SwapRequestType {
+  SWAP
+  DROP
+}
+
+enum SwapRequestStatus {
+  PENDING // DROP only: open, unclaimed
+  PENDING_TARGET // SWAP only: awaiting the invited target's response
+  PENDING_MANAGER // claimed/accepted, awaiting manager approval
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum OverrideType {
+  SEVENTH_CONSECUTIVE_DAY
+  DAILY_LIMIT_EXCEEDED
+  OTHER
+}
+
+enum NotificationType {
+  SHIFT_ASSIGNED
+  SHIFT_UNASSIGNED
+  SHIFT_CHANGED
+  SCHEDULE_PUBLISHED
+  SCHEDULE_UNPUBLISHED
+  SWAP_REQUESTED
+  SWAP_ACCEPTED
+  SWAP_DECLINED
+  SWAP_APPROVED
+  SWAP_REJECTED
+  SWAP_CANCELLED
+  DROP_POSTED
+  DROP_CLAIMED
+  DROP_EXPIRED
+  OVERTIME_WARNING
+  CONSECUTIVE_DAYS_WARNING
+  AVAILABILITY_CHANGED
+  MANAGER_APPROVAL_NEEDED
+  ASSIGNMENT_CONFLICT
+}
+
+enum AuditEntityType {
+  USER
+  LOCATION
+  STAFF_LOCATION
+  STAFF_SKILL
+  AVAILABILITY_RULE
+  AVAILABILITY_EXCEPTION
+  SCHEDULE_WEEK
+  SHIFT
+  SHIFT_ASSIGNMENT
+  SWAP_REQUEST
+  SCHEDULE_OVERRIDE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  PUBLISH
+  UNPUBLISH
+  ASSIGN
+  UNASSIGN
+  APPROVE
+  REJECT
+  CANCEL
+  CLAIM
+  CLOCK_IN
+  CLOCK_OUT
+  OVERRIDE
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Identity & org structure
+// ─────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                  String              @id @default(uuid())
+  email               String              @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  role                Role
+  homeTimezone        String
+  notificationChannel NotificationChannel @default(IN_APP)
+  desiredWeeklyHours  Float?
+  isActive            Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  managerLocations       ManagerLocation[]
+  staffSkills            StaffSkill[]
+  staffLocations         StaffLocation[]
+  availabilityRules      AvailabilityRule[]
+  availabilityExceptions AvailabilityException[]
+  refreshTokens          RefreshToken[]
+  notifications          Notification[]
+
+  shiftAssignments         ShiftAssignment[] @relation("ShiftAssignmentStaff")
+  assignedShiftAssignments ShiftAssignment[] @relation("ShiftAssignmentAssignedBy")
+  createdShifts            Shift[]           @relation("ShiftCreatedBy")
+
+  swapRequestsInitiated      SwapRequest[] @relation("SwapRequestInitiator")
+  swapRequestsAsCounterparty SwapRequest[] @relation("SwapRequestCounterparty")
+  swapRequestsDecided        SwapRequest[] @relation("SwapRequestManager")
+
+  scheduleOverridesReceived ScheduleOverride[] @relation("ScheduleOverrideStaff")
+  scheduleOverridesApproved ScheduleOverride[] @relation("ScheduleOverrideApprover")
+
+  auditLogsAsActor AuditLog[] @relation("AuditLogActor")
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Location {
+  id        String   @id @default(uuid())
+  name      String
+  timezone  String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  managerLocations ManagerLocation[]
+  staffLocations   StaffLocation[]
+  scheduleWeeks    ScheduleWeek[]
+  shifts           Shift[]
+  auditLogs        AuditLog[]
+}
+
+model ManagerLocation {
+  id         String   @id @default(uuid())
+  managerId  String
+  manager    User     @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([managerId, locationId])
+}
+
+model Skill {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  staffSkills      StaffSkill[]
+  requiredForShift Shift[]
+}
+
+model StaffSkill {
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     User     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  skillId   String
+  skill     Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([staffId, skillId])
+}
+
+/// Soft-revocable certification linking staff to the locations they may work.
+model StaffLocation {
+  id            String    @id @default(uuid())
+  staffId       String
+  staff         User      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  locationId    String
+  location      Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  certifiedAt   DateTime  @default(now())
+  decertifiedAt DateTime?
+
+  @@unique([staffId, locationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Availability
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Recurring weekly availability, in wall-clock time within the staff's homeTimezone.
+model AvailabilityRule {
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     User     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOfWeek Int // 0 = Sunday .. 6 = Saturday
+  startTime String // "HH:mm"
+  endTime   String // "HH:mm"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([staffId, dayOfWeek])
+}
+
+/// One-off override for a specific calendar date (either extra availability or a block-out).
+model AvailabilityException {
+  id        String                    @id @default(uuid())
+  staffId   String
+  staff     User                      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  date      DateTime                  @db.Date
+  type      AvailabilityExceptionType
+  startTime String? // null = entire day
+  endTime   String?
+  reason    String?
+  createdAt DateTime                  @default(now())
+
+  @@index([staffId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Scheduling
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The publish/unpublish unit: one location's schedule for one week.
+model ScheduleWeek {
+  id                 String    @id @default(uuid())
+  locationId         String
+  location           Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  weekStartDate      DateTime  @db.Date
+  isPublished        Boolean   @default(false)
+  publishedAt        DateTime?
+  publishCutoffHours Int       @default(48)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  shifts Shift[]
+
+  @@unique([locationId, weekStartDate])
+}
+
+model Shift {
+  id              String   @id @default(uuid())
+  scheduleWeekId  String
+  scheduleWeek    ScheduleWeek @relation(fields: [scheduleWeekId], references: [id], onDelete: Cascade)
+  locationId      String
+  location        Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  startAt         DateTime
+  endAt           DateTime
+  requiredSkillId String
+  requiredSkill   Skill    @relation(fields: [requiredSkillId], references: [id])
+  headcountNeeded Int      @default(1)
+  notes           String?
+  createdById     String
+  createdBy       User     @relation("ShiftCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignments ShiftAssignment[]
+
+  @@index([locationId, startAt])
+  @@index([scheduleWeekId])
+}
+
+model ShiftAssignment {
+  id           String           @id @default(uuid())
+  shiftId      String
+  shift        Shift            @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  staffId      String
+  staff        User             @relation("ShiftAssignmentStaff", fields: [staffId], references: [id], onDelete: Cascade)
+  status       AssignmentStatus @default(ASSIGNED)
+  assignedById String
+  assignedBy   User             @relation("ShiftAssignmentAssignedBy", fields: [assignedById], references: [id])
+  assignedAt   DateTime         @default(now())
+  clockInAt    DateTime?
+  clockOutAt   DateTime?
+  cancelledAt  DateTime?
+
+  swapRequestsAsSource SwapRequest[] @relation("SwapRequestInitiatorAssignment")
+  swapRequestsAsReturn SwapRequest[] @relation("SwapRequestReturnAssignment")
+
+  @@unique([shiftId, staffId])
+  @@index([staffId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Swaps & coverage
+// ─────────────────────────────────────────────────────────────────────────
+
+model SwapRequest {
+  id      String          @id @default(uuid())
+  type    SwapRequestType
+  status  SwapRequestStatus @default(PENDING)
+
+  initiatorId           String
+  initiator             User            @relation("SwapRequestInitiator", fields: [initiatorId], references: [id])
+  initiatorAssignmentId String
+  initiatorAssignment   ShiftAssignment @relation("SwapRequestInitiatorAssignment", fields: [initiatorAssignmentId], references: [id])
+
+  /// SWAP: the specific staff member invited to take the shift.
+  /// DROP: null until claimed, then the claimant.
+  counterpartyId String?
+  counterparty   User?   @relation("SwapRequestCounterparty", fields: [counterpartyId], references: [id])
+
+  /// SWAP only: if set, a true 1-for-1 exchange (counterparty's shift the initiator receives in return).
+  proposedReturnAssignmentId String?
+  proposedReturnAssignment  ShiftAssignment? @relation("SwapRequestReturnAssignment", fields: [proposedReturnAssignmentId], references: [id])
+
+  requestedAt      DateTime  @default(now())
+  respondedAt      DateTime?
+  managerId        String?
+  manager          User?     @relation("SwapRequestManager", fields: [managerId], references: [id])
+  managerDecisionAt DateTime?
+  managerReason    String?
+  expiresAt        DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([initiatorAssignmentId])
+  @@index([initiatorId, status])
+}
+
+/// A documented manager override of a hard/soft compliance rule (e.g. a 7th consecutive day).
+model ScheduleOverride {
+  id                String       @id @default(uuid())
+  staffId           String
+  staff             User         @relation("ScheduleOverrideStaff", fields: [staffId], references: [id])
+  weekStartDate     DateTime     @db.Date
+  type              OverrideType
+  reason            String
+  approvedById      String
+  approvedBy        User         @relation("ScheduleOverrideApprover", fields: [approvedById], references: [id])
+  shiftAssignmentId String?
+  createdAt         DateTime     @default(now())
+
+  @@index([staffId, weekStartDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notifications & audit
+// ─────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id          String          @id @default(uuid())
+  entityType  AuditEntityType
+  entityId    String
+  action      AuditAction
+  actorId     String?
+  actor       User?           @relation("AuditLogActor", fields: [actorId], references: [id])
+  beforeState Json?
+  afterState  Json?
+  reason      String?
+  locationId  String?
+  location    Location?       @relation(fields: [locationId], references: [id])
+  createdAt   DateTime        @default(now())
+
+  @@index([entityType, entityId])
+  @@index([locationId, createdAt])
+}
