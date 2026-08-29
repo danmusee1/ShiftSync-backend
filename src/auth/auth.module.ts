@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -7,9 +7,18 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtStrategy } from './jwt.strategy.js';
 
+// PassportModule only binds its AuthModuleOptions provider when configured via
+// .register()/.registerAsync() — re-export this exact configured instance
+// (not the bare class) so JwtAuthGuard resolves everywhere it's used.
+const passportModule = PassportModule.register({ defaultStrategy: 'jwt' });
+
+// Global: JwtAuthGuard/RolesGuard are applied via @UseGuards() across every
+// feature module's controllers, so the passport machinery they depend on
+// (AuthModuleOptions, the registered 'jwt' strategy) must be app-wide.
+@Global()
 @Module({
   imports: [
-    PassportModule,
+    passportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService<AppConfig, true>) => ({
@@ -20,6 +29,6 @@ import { JwtStrategy } from './jwt.strategy.js';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService],
+  exports: [AuthService, passportModule],
 })
 export class AuthModule {}

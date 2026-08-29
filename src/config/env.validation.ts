@@ -1,4 +1,4 @@
-import { plainToInstance } from 'class-transformer';
+import { Transform, Type, plainToInstance } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
@@ -10,11 +10,18 @@ import {
   validateSync,
 } from 'class-validator';
 
+function toBoolean({ value }: { value: unknown }): unknown {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
+  return value;
+}
+
 class EnvironmentVariables {
   @IsIn(['development', 'test', 'production'])
   @IsOptional()
   NODE_ENV = 'development';
 
+  @Type(() => Number)
   @IsInt()
   @IsOptional()
   PORT = 3000;
@@ -43,9 +50,11 @@ class EnvironmentVariables {
   @IsString()
   SMTP_HOST!: string;
 
+  @Type(() => Number)
   @IsInt()
   SMTP_PORT = 587;
 
+  @Transform(toBoolean)
   @IsBoolean()
   @IsOptional()
   SMTP_SECURE = false;
@@ -59,34 +68,42 @@ class EnvironmentVariables {
   @IsString()
   MAIL_FROM!: string;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   DEFAULT_PUBLISH_CUTOFF_HOURS = 48;
 
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   MIN_REST_HOURS = 10;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   DAILY_HOURS_WARNING = 8;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   DAILY_HOURS_HARD_BLOCK = 12;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   WEEKLY_HOURS_WARNING = 35;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   WEEKLY_HOURS_OVERTIME = 40;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   DROP_REQUEST_EXPIRY_HOURS_BEFORE_SHIFT = 24;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(20)
@@ -94,9 +111,7 @@ class EnvironmentVariables {
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {
-  const validatedConfig = plainToInstance(EnvironmentVariables, config, {
-    enableImplicitConversion: true,
-  });
+  const validatedConfig = plainToInstance(EnvironmentVariables, config);
   const errors = validateSync(validatedConfig, { skipMissingProperties: false });
 
   if (errors.length > 0) {
