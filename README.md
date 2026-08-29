@@ -143,8 +143,29 @@ Real-time (Socket.IO, JWT in `handshake.auth.token`): `notification.new` (person
 
 ## Deployment
 
+**Live URL: https://shiftsync.civic-nexus.com** (nginx → PM2 app on port 4000, TLS via the
+existing `*.civic-nexus.com` wildcard certificate — no per-subdomain cert needed).
+
 `.github/workflows/deploy.yml` builds on push to `main` and deploys to the VPS via SSH/rsync +
-PM2, mirroring the structure of the team's existing GitLab pipeline. See that file and
-`ecosystem.config.js` for the exact steps. Required GitHub repo secrets: `SSH_PRIVATE_KEY`,
-`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`. The VPS itself needs its own `.env` (never
-committed) plus Postgres and Redis reachable from it.
+PM2, mirroring the structure of the team's existing GitLab pipeline. Required GitHub repo
+secrets: `SSH_PRIVATE_KEY` (a key dedicated to this workflow — never a personal or reused key),
+`VPS_HOST`, `VPS_PORT`, `VPS_USER`, `DEPLOY_PATH`.
+
+The VPS shares infrastructure with other projects, so this app is deliberately isolated from
+them:
+
+- **Deploy path**: `/var/www/nestjs/shiftsync-backend` — its own subfolder, not the shared
+  `/var/www/nestjs` parent (which holds unrelated projects the deploy workflow's `rsync --delete`
+  would otherwise wipe).
+- **Database**: a dedicated Postgres role/database (`shiftsync_user` / `shiftsync`), separate
+  from other apps' roles on the same Postgres instance.
+- **Redis**: same Redis server as another app on this VPS, but a different logical DB
+  (`redis://localhost:6379/1`) — no key collisions, and a `FLUSHDB` on either app can't touch the
+  other's queues.
+- **Port**: `4000` — chosen because `3000`, `2222`, and `3333` were already in use by other
+  services on the box.
+
+The VPS's `.env` (production secrets — DB/Redis URLs, JWT secrets, SMTP credentials) lives only
+on the VPS, at `/var/www/nestjs/shiftsync-backend/.env`, and is never synced by the deploy
+workflow (`rsync --exclude='.env'`). `CORS_ORIGIN` is currently `*` there since no frontend
+domain exists yet — tighten it to the real frontend origin once one does.
