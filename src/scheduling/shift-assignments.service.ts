@@ -6,7 +6,7 @@ import { LocationAccessService } from '../access/location-access.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type.js';
 import { ConstraintViolationException } from '../common/exceptions/constraint-violation.exception.js';
-import type { ConstraintViolation } from '../common/constraints/constraint.types.js';
+import type { ConstraintCheckResult, ConstraintViolation } from '../common/constraints/constraint.types.js';
 import { cancelPendingSwapsForAssignments } from './cancel-pending-swaps.util.js';
 import { ConstraintEngineService } from './constraint-engine/constraint-engine.service.js';
 import { assertEditableOrThrow } from './edit-cutoff.util.js';
@@ -27,6 +27,26 @@ export class ShiftAssignmentsService {
     private readonly constraintEngine: ConstraintEngineService,
     private readonly notifications: NotificationsService,
   ) {}
+
+  /**
+   * Read-only "what-if" check: runs the full constraint engine without
+   * writing anything, so a manager can see the impact of an assignment
+   * (including overtime warnings) before confirming it.
+   */
+  async preview(shiftId: string, staffId: string, actor: AuthenticatedUser): Promise<ConstraintCheckResult> {
+    const shift = await this.getShiftOrThrow(shiftId);
+    await this.locationAccess.assertManagerCanAccessLocation(actor, shift.locationId);
+
+    const existing = await this.prisma.shiftAssignment.findUnique({
+      where: { shiftId_staffId: { shiftId, staffId } },
+    });
+
+    return this.constraintEngine.evaluateAssignment({
+      staffId,
+      shift,
+      excludeAssignmentId: existing?.id,
+    });
+  }
 
   async assign(
     shiftId: string,

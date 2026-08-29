@@ -1,9 +1,11 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AuditAction, AuditEntityType, Role, type ScheduleWeek } from '@prisma/client';
+import { AuditAction, AuditEntityType, NotificationType, Role, type ScheduleWeek } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LocationAccessService } from '../access/location-access.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { RealtimeGateway } from '../realtime/realtime.gateway.js';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type.js';
 import type { AppConfig } from '../config/configuration.js';
 import { dayOfWeekFor } from './constraint-engine/time-window.util.js';
@@ -17,6 +19,8 @@ export class ScheduleWeeksService {
     private readonly audit: AuditService,
     private readonly locationAccess: LocationAccessService,
     private readonly configService: ConfigService<AppConfig, true>,
+    private readonly notifications: NotificationsService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   async getOrCreate(
@@ -121,6 +125,22 @@ export class ScheduleWeeksService {
       locationId: week.locationId,
     });
 
+    this.realtime.emitToLocation(week.locationId, 'schedule.published', updated);
+
+    const certifiedStaff = await this.prisma.staffLocation.findMany({
+      where: { locationId: week.locationId, decertifiedAt: null },
+      select: { staffId: true },
+    });
+    await this.notifications.createMany(
+      certifiedStaff.map(({ staffId }) => ({
+        userId: staffId,
+        type: NotificationType.SCHEDULE_PUBLISHED,
+        title: 'Schedule published',
+        body: `The schedule for the week of ${week.weekStartDate.toISOString().slice(0, 10)} is now available.`,
+        data: { scheduleWeekId: id },
+      })),
+    );
+
     return updated;
   }
 
@@ -155,6 +175,22 @@ export class ScheduleWeeksService {
       afterState: updated,
       locationId: week.locationId,
     });
+
+    this.realtime.emitToLocation(week.locationId, 'schedule.unpublished', updated);
+
+    const certifiedStaff = await this.prisma.staffLocation.findMany({
+      where: { locationId: week.locationId, decertifiedAt: null },
+      select: { staffId: true },
+    });
+    await this.notifications.createMany(
+      certifiedStaff.map(({ staffId }) => ({
+        userId: staffId,
+        type: NotificationType.SCHEDULE_UNPUBLISHED,
+        title: 'Schedule unpublished',
+        body: `The schedule for the week of ${week.weekStartDate.toISOString().slice(0, 10)} was unpublished and may change.`,
+        data: { scheduleWeekId: id },
+      })),
+    );
 
     return updated;
   }

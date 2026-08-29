@@ -26,6 +26,15 @@ export class ShiftAssignmentsController {
     return this.shiftAssignmentsService.assign(shiftId, dto.staffId, actor);
   }
 
+  @Post('preview')
+  preview(
+    @Param('shiftId') shiftId: string,
+    @Body() dto: AssignStaffDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.shiftAssignmentsService.preview(shiftId, dto.staffId, actor);
+  }
+
   @Delete(':staffId')
   unassign(
     @Param('shiftId') shiftId: string,

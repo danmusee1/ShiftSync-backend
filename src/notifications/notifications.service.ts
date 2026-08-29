@@ -1,6 +1,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Notification, NotificationType, Prisma } from '@prisma/client';
+import { NotificationChannel, type Notification, type NotificationType, type Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { RealtimeGateway } from '../realtime/realtime.gateway.js';
+import { MailQueueService } from '../mail/mail-queue.service.js';
 
 export interface CreateNotificationParams {
   userId: string;
@@ -14,10 +16,18 @@ type Db = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+    private readonly mailQueue: MailQueueService,
+  ) {}
 
+  // NOTE: db defaults to the app-wide client. If a caller ever passes an
+  // in-flight transaction client here, the realtime emit/email below fire
+  // before that transaction commits (and even if it later rolls back) — fine
+  // for today's call sites, which never pass one, but worth knowing before reusing.
   async create(params: CreateNotificationParams, db: Db = this.prisma): Promise<Notification> {
-    return db.notification.create({
+    const notification = await db.notification.create({
       data: {
         userId: params.userId,
         type: params.type,
@@ -26,6 +36,9 @@ export class NotificationsService {
         data: params.data as Prisma.InputJsonValue | undefined,
       },
     });
+    this.realtime.emitToUser(params.userId, 'notification.new', notification);
+    await this.maybeSendEmail(params);
+    return notification;
   }
 
   async createMany(paramsList: CreateNotificationParams[], db: Db = this.prisma): Promise<void> {
@@ -39,6 +52,24 @@ export class NotificationsService {
         data: params.data as Prisma.InputJsonValue | undefined,
       })),
     });
+    for (const params of paramsList) {
+      this.realtime.emitToUser(params.userId, 'notification.new', params);
+      await this.maybeSendEmail(params);
+    }
+  }
+
+  private async maybeSendEmail(params: CreateNotificationParams): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { email: true, notificationChannel: true },
+    });
+    if (user?.notificationChannel === NotificationChannel.IN_APP_AND_EMAIL) {
+      await this.mailQueue.enqueueNotificationEmail({
+        to: user.email,
+        subject: params.title,
+        body: params.body,
+      });
+    }
   }
 
   listForUser(userId: string, unreadOnly = false): Promise<Notification[]> {
