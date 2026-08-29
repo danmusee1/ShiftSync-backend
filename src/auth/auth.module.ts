@@ -12,23 +12,24 @@ import { JwtStrategy } from './jwt.strategy.js';
 // (not the bare class) so JwtAuthGuard resolves everywhere it's used.
 const passportModule = PassportModule.register({ defaultStrategy: 'jwt' });
 
+const jwtModule = JwtModule.registerAsync({
+  inject: [ConfigService],
+  useFactory: (configService: ConfigService<AppConfig, true>) => ({
+    secret: configService.get('jwt.accessSecret', { infer: true }),
+    signOptions: { expiresIn: configService.get('jwt.accessTtl', { infer: true }) },
+  }),
+});
+
 // Global: JwtAuthGuard/RolesGuard are applied via @UseGuards() across every
 // feature module's controllers, so the passport machinery they depend on
-// (AuthModuleOptions, the registered 'jwt' strategy) must be app-wide.
+// (AuthModuleOptions, the registered 'jwt' strategy) must be app-wide. Other
+// modules (e.g. RealtimeGateway, to verify socket handshake tokens) also need
+// JwtService, hence exporting jwtModule too.
 @Global()
 @Module({
-  imports: [
-    passportModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService<AppConfig, true>) => ({
-        secret: configService.get('jwt.accessSecret', { infer: true }),
-        signOptions: { expiresIn: configService.get('jwt.accessTtl', { infer: true }) },
-      }),
-    }),
-  ],
+  imports: [passportModule, jwtModule],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService, passportModule],
+  exports: [AuthService, passportModule, jwtModule],
 })
 export class AuthModule {}
