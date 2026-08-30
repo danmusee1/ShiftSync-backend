@@ -96,12 +96,19 @@ jobs:
               echo "-> Running Prisma migrations..."
               docker run --rm --network host --env-file .env "$IMAGE_TAG" npx prisma migrate deploy
 
+              echo "-> Retiring the old PM2-managed process, if it's still hanging around..."
+              pm2 delete shiftsync-api 2>/dev/null || true
+              pm2 save 2>/dev/null || true
+
               echo "-> Stopping previous container (if any)..."
               docker stop shiftsync-api 2>/dev/null || true
               docker rm shiftsync-api 2>/dev/null || true
 
               echo "-> Starting new container..."
+              # log-opt caps json-file logs at 30MB total (10MB x 3 files) instead
+              # of growing unbounded — `docker logs` still works exactly the same.
               docker run -d --name shiftsync-api --network host --restart unless-stopped \
+                --log-opt max-size=10m --log-opt max-file=3 \
                 --env-file .env "$IMAGE_TAG"
 
               echo "-> Waiting for health check..."
