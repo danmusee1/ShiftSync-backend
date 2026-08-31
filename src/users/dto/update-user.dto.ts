@@ -10,6 +10,7 @@ export class UpdateUserDto extends PartialType(
     'homeTimezone',
     'notificationChannel',
     'desiredWeeklyHours',
+    'hourlyRate',
   ] as const),
 ) {
   @ApiPropertyOptional({ description: 'Admin-initiated password reset' })

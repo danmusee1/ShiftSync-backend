@@ -24,8 +24,20 @@ export interface StaffWeeklyHours {
   weeklyHours: number;
   status: 'OK' | 'WARNING' | 'OVERTIME';
   projectedOvertimeHours: number;
+  /** USD/hour, or null if this staff member has no rate on file. */
+  hourlyRate: number | null;
+  /** All null when hourlyRate is null — there's nothing to project a cost from. */
+  regularCost: number | null;
+  /** Just the extra half — what overtime is costing beyond the regular rate. */
+  overtimePremium: number | null;
+  totalCost: number | null;
   assignments: WeeklyHoursAssignment[];
 }
+
+/** Standard FLSA-style time-and-a-half assumption for hours beyond the
+ * overtime threshold — not configurable today, since nothing in the business
+ * rules config currently varies this per jurisdiction. */
+const OVERTIME_PAY_MULTIPLIER = 1.5;
 
 @Injectable()
 export class ComplianceService {
@@ -82,6 +94,10 @@ export class ComplianceService {
         weeklyHours: 0,
         status: 'OK' as const,
         projectedOvertimeHours: 0,
+        hourlyRate: staff.hourlyRate,
+        regularCost: null,
+        overtimePremium: null,
+        totalCost: null,
         assignments: [],
       };
 
@@ -107,6 +123,14 @@ export class ComplianceService {
           : bucket.weeklyHours > rules.weeklyHoursWarning
             ? 'WARNING'
             : 'OK';
+
+      if (bucket.hourlyRate != null) {
+        const regularHours = Math.min(bucket.weeklyHours, rules.weeklyHoursOvertime);
+        const overtimeHours = bucket.projectedOvertimeHours;
+        bucket.regularCost = regularHours * bucket.hourlyRate;
+        bucket.overtimePremium = overtimeHours * bucket.hourlyRate * (OVERTIME_PAY_MULTIPLIER - 1);
+        bucket.totalCost = bucket.regularCost + overtimeHours * bucket.hourlyRate * OVERTIME_PAY_MULTIPLIER;
+      }
     }
 
     return [...byStaff.values()].sort((a, b) => b.weeklyHours - a.weeklyHours);

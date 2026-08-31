@@ -8,7 +8,12 @@ import type { AuthenticatedUser } from '../auth/types/authenticated-user.type.js
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
-import { sanitizeUser, type UserResponse } from './user-response.mapper.js';
+import {
+  sanitizeUser,
+  sanitizeUserWithRate,
+  type UserResponse,
+  type UserResponseWithRate,
+} from './user-response.mapper.js';
 
 const PASSWORD_SALT_ROUNDS = 12;
 
@@ -20,7 +25,7 @@ export class UsersService {
     private readonly locationAccess: LocationAccessService,
   ) {}
 
-  async create(dto: CreateUserDto, actor: AuthenticatedUser): Promise<UserResponse> {
+  async create(dto: CreateUserDto, actor: AuthenticatedUser): Promise<UserResponseWithRate> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) {
       throw new ConflictException('A user with this email already exists');
@@ -38,6 +43,7 @@ export class UsersService {
         homeTimezone: dto.homeTimezone,
         notificationChannel: dto.notificationChannel,
         desiredWeeklyHours: dto.desiredWeeklyHours,
+        hourlyRate: dto.hourlyRate,
       },
     });
 
@@ -49,16 +55,18 @@ export class UsersService {
       afterState: sanitizeUser(user),
     });
 
-    return sanitizeUser(user);
+    return sanitizeUserWithRate(user);
   }
 
-  async findAll(actor: AuthenticatedUser, role?: Role): Promise<UserResponse[]> {
+  // Only reachable via @Roles(ADMIN, MANAGER) on the controller — safe to
+  // include hourlyRate here (unlike listColleagues, which staff can call).
+  async findAll(actor: AuthenticatedUser, role?: Role): Promise<UserResponseWithRate[]> {
     if (actor.role === Role.ADMIN) {
       const users = await this.prisma.user.findMany({
         where: { role },
         orderBy: { createdAt: 'asc' },
       });
-      return users.map(sanitizeUser);
+      return users.map(sanitizeUserWithRate);
     }
 
     // Managers only see staff certified at their locations (plus themselves).
@@ -77,7 +85,7 @@ export class UsersService {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return users.map(sanitizeUser);
+    return users.map(sanitizeUserWithRate);
   }
 
   /** Other active staff certified at any location the caller is also certified at. */
@@ -107,7 +115,7 @@ export class UsersService {
     return sanitizeUser(user);
   }
 
-  async update(id: string, dto: UpdateUserDto, actor: AuthenticatedUser): Promise<UserResponse> {
+  async update(id: string, dto: UpdateUserDto, actor: AuthenticatedUser): Promise<UserResponseWithRate> {
     const before = await this.getOrThrow(id);
 
     const passwordHash = dto.password
@@ -123,6 +131,7 @@ export class UsersService {
         homeTimezone: dto.homeTimezone,
         notificationChannel: dto.notificationChannel,
         desiredWeeklyHours: dto.desiredWeeklyHours,
+        hourlyRate: dto.hourlyRate,
         passwordHash,
       },
     });
@@ -136,7 +145,7 @@ export class UsersService {
       afterState: sanitizeUser(user),
     });
 
-    return sanitizeUser(user);
+    return sanitizeUserWithRate(user);
   }
 
   async updateOwnProfile(

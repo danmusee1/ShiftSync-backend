@@ -46,4 +46,10 @@ export class CreateUserDto {
   @IsNumber()
   @Min(0)
   desiredWeeklyHours?: number;
+
+  @ApiPropertyOptional({ description: 'USD/hour. Admin-only — never returned to non-admin callers.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  hourlyRate?: number;
 }

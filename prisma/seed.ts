@@ -159,6 +159,7 @@ async function main(): Promise<void> {
         homeTimezone,
         desiredWeeklyHours: [20, 25, 30, 35, 40][i % 5],
         notificationChannel: i % 3 === 0 ? NotificationChannel.IN_APP_AND_EMAIL : NotificationChannel.IN_APP,
+        hourlyRate: 16 + (i % 8), // spread of $16-23/hr across the roster
       },
     });
 
@@ -205,6 +206,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       desiredWeeklyHours: 30,
+      hourlyRate: 19,
     },
   });
   await prisma.staffLocation.create({ data: { staffId: rileyOnshift.id, locationId: santaMonica.id } });
@@ -222,6 +224,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       desiredWeeklyHours: 40,
+      hourlyRate: 22, // "The Overtime Trap" also demonstrates real projected-cost math: 45h -> $1,045 ($55 overtime premium)
     },
   });
   await prisma.staffLocation.create({ data: { staffId: jordanFortyplus.id, locationId: santaMonica.id } });
@@ -239,6 +242,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles', // "The Timezone Tangle" — see DECISIONS.md
       desiredWeeklyHours: 25,
+      hourlyRate: 24,
     },
   });
   await prisma.staffLocation.create({ data: { staffId: averyBicoastal.id, locationId: santaMonica.id } });
@@ -258,6 +262,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       desiredWeeklyHours: 30,
+      hourlyRate: 17,
     },
   });
   await prisma.staffLocation.create({ data: { staffId: skylerNeverweekend.id, locationId: santaMonica.id } });
@@ -275,6 +280,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       desiredWeeklyHours: 30,
+      hourlyRate: 16,
     },
   });
   await prisma.staffLocation.create({ data: { staffId: drewAlldays.id, locationId: santaMonica.id } });
@@ -292,6 +298,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       isActive: true,
+      hourlyRate: 18,
     },
   });
   await prisma.staffSkill.create({ data: { staffId: morganRetired.id, skillId: skillByName['server'].id } });
@@ -305,6 +312,7 @@ async function main(): Promise<void> {
       role: Role.STAFF,
       homeTimezone: 'America/Los_Angeles',
       desiredWeeklyHours: 25,
+      hourlyRate: 19,
     },
   });
   await prisma.staffLocation.create({ data: { staffId: staffB.id, locationId: santaMonica.id } });

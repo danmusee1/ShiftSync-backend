@@ -18,7 +18,7 @@ import { RolesGuard } from '../common/guards/roles.guard.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
-import type { UserResponse } from './user-response.mapper.js';
+import type { UserResponse, UserResponseWithRate } from './user-response.mapper.js';
 import { UsersService } from './users.service.js';
 
 @ApiTags('users')
@@ -57,7 +57,7 @@ export class UsersController {
   create(
     @Body() dto: CreateUserDto,
     @CurrentUser() actor: AuthenticatedUser,
-  ): Promise<UserResponse> {
+  ): Promise<UserResponseWithRate> {
     return this.usersService.create(dto, actor);
   }
 
@@ -66,7 +66,7 @@ export class UsersController {
   findAll(
     @CurrentUser() actor: AuthenticatedUser,
     @Query('role') role?: Role,
-  ): Promise<UserResponse[]> {
+  ): Promise<UserResponseWithRate[]> {
     return this.usersService.findAll(actor, role);
   }
 
@@ -84,7 +84,7 @@ export class UsersController {
     @Param('id') id: string,
     @Body() dto: UpdateUserDto,
     @CurrentUser() actor: AuthenticatedUser,
-  ): Promise<UserResponse> {
+  ): Promise<UserResponseWithRate> {
     return this.usersService.update(id, dto, actor);
   }
 
