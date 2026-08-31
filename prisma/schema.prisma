@@ -128,6 +128,12 @@ model User {
   homeTimezone        String
   notificationChannel NotificationChannel @default(IN_APP)
   desiredWeeklyHours  Float?
+  /// Admin-set, USD/hour. Nullable — not every staff record has one yet.
+  /// Never exposed through the general user-response mapper (see
+  /// user-response.mapper.ts) to avoid leaking pay data through endpoints
+  /// staff can call about their colleagues; only surfaced to ADMIN/MANAGER
+  /// contexts that specifically need it (the admin user list, compliance cost).
+  hourlyRate          Float?
   isActive            Boolean             @default(true)
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
