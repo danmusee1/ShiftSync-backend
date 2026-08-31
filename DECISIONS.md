@@ -90,10 +90,18 @@ pending, so there's nothing to roll back. Once a manager approves, the request b
 - **"Premium" shift = Friday/Saturday, local start hour ≥ 17:00**, computed in the *location's*
   timezone (unlike availability, which uses the staff's home timezone) — desirability is a
   property of the shift itself, not of whoever might work it.
-- **Overtime "cost" is reported in hours, not dollars.** The spec asks for "projected overtime
-  costs" but defines no wage/pay-rate field anywhere in the data model. Rather than fabricate a
-  wage, the dashboard (`GET /compliance/overtime`) surfaces projected overtime *hours* — the actual
-  driver of cost — and a manager or a future payroll integration can multiply by a real rate.
+- **Overtime cost assumes standard time-and-a-half.** The data model now has an admin-set,
+  optional `hourlyRate` (USD/hour) on `User` — added after the initial build, since the spec asks
+  for "projected overtime costs" and the original schema had no wage field to compute one from.
+  `GET /compliance/overtime` reports both the hours *and*, wherever a rate is on file, the dollar
+  cost: regular hours at the base rate, hours past the weekly threshold at 1.5×, with the "overtime
+  premium" (just the extra 0.5×) broken out separately. Nothing in the business-rules config makes
+  that 1.5× multiplier configurable per jurisdiction today — it's the standard FLSA assumption, not
+  a per-company setting. Staff with no rate on file simply show no cost figure rather than a
+  fabricated one; the hours-based numbers (which don't depend on wage data at all) are unaffected.
+  For privacy, `hourlyRate` is stripped from every response a staff member could see about a
+  colleague (including their own swap-target picker) — it's only ever returned to the admin user
+  list/create/update endpoints and folded into the compliance report's aggregate numbers.
 - **A swap request caps at 3 pending per staff member** (`initiator`, across both `SWAP` and
   `DROP` types, any non-terminal status) per the spec. Claiming/accepting someone else's request
   doesn't count against your own cap — only requests *you* initiated do.
