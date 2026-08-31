@@ -59,6 +59,7 @@ export class SwapsService {
     await this.assertBelowPendingCap(staffId);
 
     const initiatorAssignment = await this.getActiveAssignmentOrThrow(dto.shiftId, staffId);
+    await this.assertNoActiveRequestForAssignment(initiatorAssignment.id);
 
     const target = await this.prisma.user.findUnique({ where: { id: dto.targetStaffId } });
     if (!target || target.role !== Role.STAFF || !target.isActive) {
@@ -108,6 +109,7 @@ export class SwapsService {
     await this.assertBelowPendingCap(staffId);
 
     const initiatorAssignment = await this.getActiveAssignmentOrThrow(dto.shiftId, staffId);
+    await this.assertNoActiveRequestForAssignment(initiatorAssignment.id);
     const shift = initiatorAssignment.shift;
 
     if (shift.startAt <= new Date()) {
@@ -574,6 +576,22 @@ export class SwapsService {
     if (count >= max) {
       throw new ConflictException(
         `You already have ${count} pending swap/drop requests (max ${max}). Cancel one before creating another.`,
+      );
+    }
+  }
+
+  /**
+   * The pending-request cap (assertBelowPendingCap) limits total flooding
+   * across all of a staff member's shifts, but doesn't stop the same shift
+   * being posted for swap/drop repeatedly — this catches that specifically.
+   */
+  private async assertNoActiveRequestForAssignment(assignmentId: string): Promise<void> {
+    const existing = await this.prisma.swapRequest.findFirst({
+      where: { initiatorAssignmentId: assignmentId, status: { in: ACTIVE_STATUSES } },
+    });
+    if (existing) {
+      throw new ConflictException(
+        'This shift already has an active swap or drop request — cancel it before creating another.',
       );
     }
   }

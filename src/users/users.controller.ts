@@ -41,6 +41,17 @@ export class UsersController {
     return this.usersService.updateOwnProfile(user.id, dto);
   }
 
+  /**
+   * Narrowly scoped for staff-initiated swap requests: other active staff
+   * certified at a location the caller is also certified at. Deliberately
+   * not the full `findAll` (ADMIN/MANAGER only, sees every role) — a staff
+   * member picking a swap target shouldn't be able to list the whole company.
+   */
+  @Get('me/colleagues')
+  myColleagues(@CurrentUser() user: AuthenticatedUser): Promise<UserResponse[]> {
+    return this.usersService.listColleagues(user);
+  }
+
   @Roles(Role.ADMIN)
   @Post()
   create(

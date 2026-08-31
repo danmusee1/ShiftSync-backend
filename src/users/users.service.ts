@@ -80,6 +80,27 @@ export class UsersService {
     return users.map(sanitizeUser);
   }
 
+  /** Other active staff certified at any location the caller is also certified at. */
+  async listColleagues(actor: AuthenticatedUser): Promise<UserResponse[]> {
+    const myLocations = await this.prisma.staffLocation.findMany({
+      where: { staffId: actor.id, decertifiedAt: null },
+      select: { locationId: true },
+    });
+    const locationIds = myLocations.map((l) => l.locationId);
+    if (locationIds.length === 0) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        role: Role.STAFF,
+        isActive: true,
+        id: { not: actor.id },
+        staffLocations: { some: { decertifiedAt: null, locationId: { in: locationIds } } },
+      },
+      orderBy: { firstName: 'asc' },
+    });
+    return users.map(sanitizeUser);
+  }
+
   async findOne(id: string, actor: AuthenticatedUser): Promise<UserResponse> {
     await this.locationAccess.assertCanAccessStaff(actor, id);
     const user = await this.getOrThrow(id);
